@@ -64,31 +64,74 @@ st.markdown(
 # LOAD DATA
 # ============================================================
 
-@st.cache_data
+# Public Hugging Face dataset URL.
+# This is used as the default source when the app is deployed.
+DEFAULT_DATA_URL = (
+    "https://huggingface.co/datasets/dikshaballav/"
+    "GlobalWeatherRepository/resolve/main/GlobalWeatherRepository.csv"
+)
+
+
+@st.cache_data(show_spinner="Loading weather dataset...")
 def load_data():
 
+    # ------------------------------------------------------------
+    # 1. Streamlit Cloud / deployed app:
+    #    If DATA_URL is configured in Manage App -> Settings -> Secrets,
+    #    use that URL.
+    # ------------------------------------------------------------
+    data_url = None
+
+    try:
+        data_url = st.secrets.get("DATA_URL")
+    except Exception:
+        # No Streamlit secret configured.
+        data_url = None
+
+    if data_url:
+        try:
+            return pd.read_csv(data_url)
+        except Exception as e:
+            st.warning(
+                "The DATA_URL configured in Streamlit Secrets could not "
+                f"be loaded. Falling back to the public Hugging Face dataset. "
+                f"Details: {e}"
+            )
+
+    # ------------------------------------------------------------
+    # 2. Default deployed source:
+    #    Public Hugging Face dataset.
+    # ------------------------------------------------------------
+    try:
+        return pd.read_csv(DEFAULT_DATA_URL)
+    except Exception as e:
+        st.warning(
+            "The Hugging Face dataset could not be loaded. "
+            f"Details: {e}"
+        )
+
+    # ------------------------------------------------------------
+    # 3. Local development fallback:
+    #    This allows the app to continue working on your laptop
+    #    when the CSV exists in the local data folder.
+    # ------------------------------------------------------------
     possible_paths = [
         "data/GlobalWeatherRepository.csv",
         "GlobalWeatherRepository.csv"
     ]
 
-    df = None
-
     for path in possible_paths:
-
         try:
-            df = pd.read_csv(path)
-            break
+            return pd.read_csv(path)
         except FileNotFoundError:
             continue
 
-    if df is None:
-        raise FileNotFoundError(
-            "GlobalWeatherRepository.csv was not found. "
-            "Place it inside the data folder."
-        )
-
-    return df
+    raise FileNotFoundError(
+        "GlobalWeatherRepository.csv could not be loaded. "
+        "For Streamlit Cloud, verify the Hugging Face dataset URL "
+        "or configure DATA_URL in Manage App -> Settings -> Secrets. "
+        "For local use, place the CSV inside the data folder."
+    )
 
 
 # ============================================================
