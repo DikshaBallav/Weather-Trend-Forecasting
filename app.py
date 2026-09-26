@@ -141,7 +141,7 @@ def load_data():
 def find_column(df, possible_names):
 
     lower_columns = {
-        col.lower().strip(): col
+        str(col).replace("\ufeff", "").strip().lower(): col
         for col in df.columns
     }
 
@@ -188,11 +188,13 @@ def detect_columns(df):
     columns["temperature"] = find_column(
         df,
         [
-            # Actual column name in GlobalWeatherRepository.csv
+            # GlobalWeatherRepository.csv / common variants
             "temperature_celsius",
             "temperature_c",
             "temp_celsius",
             "temp_c",
+            "temperature (c)",
+            "temperature (°c)",
             "temperature",
             "temp"
         ]
@@ -1510,71 +1512,146 @@ elif page == "Feature Importance":
 
     st.header("⭐ Feature Importance")
 
-    if not columns["temperature"]:
+    target = columns.get("temperature")
 
-        st.warning(
-            "Temperature column not detected."
-        )
+    if not target:
+        st.error("Temperature column could not be detected in the loaded dataset.")
+        st.write("Detected dataset columns:")
+        st.code("\n".join(map(str, df.columns.tolist())))
         st.stop()
 
-    numeric_columns = df.select_dtypes(
-        include=np.number
-    ).columns.tolist()
+    # Find columns that contain usable numeric values.
+    candidate_features = []
 
-    target = columns["temperature"]
+    for col in df.columns:
+        if col == target:
+            continue
 
-    feature_columns = [
-        col
-        for col in numeric_columns
-        if col != target
-    ]
+        converted = pd.to_numeric(df[col], errors="coerce")
 
-    if len(feature_columns) == 0:
+        if converted.notna().sum() > 0:
+            candidate_features.append(col)
 
-        st.warning(
-            "Not enough numerical features."
-        )
+    if not candidate_features:
+        st.warning("No usable numerical features were found for feature importance.")
         st.stop()
 
-    feature_df = df[
-        feature_columns + [target]
-    ].dropna()
 
-    X = feature_df[
-        feature_columns
-    ]
+    @st.cache_data(show_spinner="Calculating feature importance...")
+    def calculate_feature_importance(
+        data,
+        target_column,
+        feature_columns,
+        max_samples=50000
+    ):
+        # Create only the columns needed by the model.
+        model_df = pd.DataFrame(index=data.index)
 
-    y = feature_df[
-        target
-    ]
+        for col in feature_columns:
+            model_df[col] = pd.to_numeric(
+                data[col],
+                errors="coerce"
+            )
 
-    model = RandomForestRegressor(
-        n_estimators=200,
-        random_state=42,
-        n_jobs=-1
-    )
+        model_df[target_column] = pd.to_numeric(
+            data[target_column],
+            errors="coerce"
+        )
 
-    model.fit(
-        X,
-        y
-    )
+        model_df = model_df.replace(
+            [np.inf, -np.inf],
+            np.nan
+        )
 
-    importance = pd.DataFrame(
-        {
-            "Feature": feature_columns,
+        # Do not drop every row just because one feature is missing.
+        # Fill feature missing values with their median instead.
+        usable_features = []
+
+        for col in feature_columns:
+            if model_df[col].notna().sum() > 0:
+                median_value = model_df[col].median()
+
+                if pd.notna(median_value):
+                    model_df[col] = model_df[col].fillna(median_value)
+
+                    if model_df[col].nunique() > 1:
+                        usable_features.append(col)
+
+        model_df = model_df.dropna(
+            subset=[target_column]
+        )
+
+        if len(model_df) < 10 or not usable_features:
+            return pd.DataFrame(columns=["Feature", "Importance"]), 0, 0
+
+        # Sampling is ONLY for the Streamlit dashboard's interactive
+        # feature-importance calculation. The Jupyter assignment remains
+        # unchanged and continues to use the full dataset.
+        sampled = False
+
+        if len(model_df) > max_samples:
+            model_df = model_df.sample(
+                n=max_samples,
+                random_state=42
+            )
+            sampled = True
+
+        X = model_df[usable_features]
+        y = model_df[target_column]
+
+        model = RandomForestRegressor(
+            n_estimators=100,
+            random_state=42,
+            n_jobs=-1
+        )
+
+        model.fit(X, y)
+
+        importance = pd.DataFrame({
+            "Feature": usable_features,
             "Importance": model.feature_importances_
-        }
-    ).sort_values(
-        "Importance",
-        ascending=False
+        }).sort_values(
+            "Importance",
+            ascending=False
+        )
+
+        return importance, len(model_df), sampled
+
+
+    importance, rows_used, sampled = calculate_feature_importance(
+        df,
+        target,
+        tuple(candidate_features),
+        50000
+    )
+
+    if importance.empty:
+        st.warning("No varying numerical features are available for the model.")
+        st.stop()
+
+    if sampled:
+        st.info(
+            f"For faster interactive performance, feature importance was "
+            f"calculated using a representative sample of {rows_used:,} "
+            f"observations. The Jupyter Notebook analysis is unchanged."
+        )
+    else:
+        st.success(
+            f"Feature importance calculated using {rows_used:,} observations."
+        )
+
+    st.caption(
+        f"Target variable: {target} | "
+        f"Random Forest: 100 trees | "
+        f"Maximum dashboard sample: 50,000 rows"
     )
 
     fig = px.bar(
-        importance.head(20),
+        importance.head(20).sort_values("Importance"),
         x="Importance",
         y="Feature",
         orientation="h",
-        title="Random Forest Feature Importance"
+        title=f"Random Forest Feature Importance — Target: {target}"
     )
 
     st.plotly_chart(
