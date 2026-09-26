@@ -188,7 +188,10 @@ def detect_columns(df):
     columns["temperature"] = find_column(
         df,
         [
+            # Actual column name in GlobalWeatherRepository.csv
+            "temperature_celsius",
             "temperature_c",
+            "temp_celsius",
             "temp_c",
             "temperature",
             "temp"
@@ -1655,19 +1658,66 @@ elif page == "Spatial Analysis":
             random_state=42
         )
 
-    fig = px.scatter_mapbox(
-        map_df,
-        lat=columns["latitude"],
-        lon=columns["longitude"],
-        color=selected_variable,
-        zoom=1,
-        height=600,
-        title=f"Geographical Distribution of {selected_variable}"
+    # Ensure map coordinates and selected variable are numeric.
+    map_df = map_df.copy()
+    map_df[columns["latitude"]] = pd.to_numeric(
+        map_df[columns["latitude"]], errors="coerce"
+    )
+    map_df[columns["longitude"]] = pd.to_numeric(
+        map_df[columns["longitude"]], errors="coerce"
+    )
+    map_df[selected_variable] = pd.to_numeric(
+        map_df[selected_variable], errors="coerce"
     )
 
-    fig.update_layout(
-        mapbox_style="open-street-map"
+    map_df = map_df.dropna(
+        subset=[
+            columns["latitude"],
+            columns["longitude"],
+            selected_variable
+        ]
     )
+
+    # Keep only valid geographic coordinates.
+    map_df = map_df[
+        map_df[columns["latitude"]].between(-90, 90)
+        & map_df[columns["longitude"]].between(-180, 180)
+    ]
+
+    if map_df.empty:
+        st.warning(
+            "No valid latitude/longitude records are available for the map."
+        )
+        st.stop()
+
+    # Plotly 5.24+ uses MapLibre and px.scatter_map.
+    # Older Plotly versions use px.scatter_mapbox.
+    # Supporting both makes the app work locally and on Streamlit Cloud.
+    if hasattr(px, "scatter_map"):
+        fig = px.scatter_map(
+            map_df,
+            lat=columns["latitude"],
+            lon=columns["longitude"],
+            color=selected_variable,
+            zoom=1,
+            height=600,
+            title=f"Geographical Distribution of {selected_variable}",
+            map_style="open-street-map"
+        )
+    else:
+        fig = px.scatter_mapbox(
+            map_df,
+            lat=columns["latitude"],
+            lon=columns["longitude"],
+            color=selected_variable,
+            zoom=1,
+            height=600,
+            title=f"Geographical Distribution of {selected_variable}"
+        )
+
+        fig.update_layout(
+            mapbox_style="open-street-map"
+        )
 
     st.plotly_chart(
         fig,
