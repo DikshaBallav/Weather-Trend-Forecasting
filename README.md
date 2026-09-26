@@ -6,7 +6,7 @@ The project includes data preprocessing, exploratory data analysis, time-series 
 
 ## 🚀 Live Streamlit Dashboard
 
-🔗 **Live App:** [Open Weather Trend Forecasting Dashboard](YOUR_STREAMLIT_APP_URL)
+🔗 **Live App:** [Open Weather Trend Forecasting Dashboard](https://weather-trend-forecasting-du4bxxxyqurhghhz72y4vf.streamlit.app/)
 
 The interactive Streamlit dashboard provides access to:
 
